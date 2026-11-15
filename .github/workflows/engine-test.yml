@@ -30,63 +30,54 @@ jobs:
       - name: Model download links are valid
         shell: bash
         run: |
+          set +e
           for u in "$STANDARD_URL" "$LITE_URL"; do
-            code=$(curl -sIL -o /dev/null -w "%{http_code}" "$u")
-            size=$(curl -sIL "$u" | grep -i '^content-length' | tail -1 | tr -d '\r' | awk '{print $2}')
-            echo "$code  $size bytes  $u"
-            [ "$code" = "200" ] || { echo "::error::Model URL not reachable: $u ($code)"; exit 1; }
+            code=$(curl -sIL -o /dev/null -w "%{http_code}" "$u"); rc=$?
+            echo "curl=$rc http=$code $u"
+            [ "$rc" = "0" ] && [ "$code" = "200" ] || { echo "::error title=model-url::not reachable (curl=$rc http=$code): $u"; exit 1; }
           done
 
       - name: Download Lite model
         shell: bash
         run: |
-          curl -sSL --retry 5 -o lite.gguf "$LITE_URL" || { echo "::error::model download failed"; exit 1; }
-          head -c 4 lite.gguf | grep -q GGUF || { echo "::error::Downloaded file is not GGUF: $(head -c 120 lite.gguf)"; exit 1; }
+          set +e
+          curl -sSL --retry 5 -o lite.gguf "$LITE_URL"; rc=$?
+          [ "$rc" = "0" ] || { echo "::error title=download::curl exit $rc"; exit 1; }
+          head -c 4 lite.gguf | grep -q GGUF || { echo "::error title=download::not a GGUF file: $(head -c 120 lite.gguf)"; exit 1; }
           ls -l lite.gguf
 
-      - name: Start llama-server (same args as the app)
-        shell: pwsh
-        run: |
-          trap { Write-Host "::error title=start::$($_.Exception.Message) | $((Get-Content server.err -Tail 8 -ErrorAction SilentlyContinue) -join ' / ')"; exit 1 }
-          $p = Start-Process -FilePath engine/llama-server.exe -WorkingDirectory engine -PassThru -NoNewWindow `
-            -RedirectStandardOutput server.out -RedirectStandardError server.err `
-            -ArgumentList @("-m", "..\lite.gguf", "--host", "127.0.0.1", "--port", "18080", "--api-key", "testkey", "-c", "8192", "--jinja", "--no-webui")
-          $deadline = (Get-Date).AddMinutes(4)
-          while ((Get-Date) -lt $deadline) {
-            if ($p.HasExited) { Get-Content server.err -Tail 40; throw "llama-server exited with code $($p.ExitCode)" }
-            try { if ((Invoke-WebRequest http://127.0.0.1:18080/health -UseBasicParsing).StatusCode -eq 200) { Write-Host "ready"; exit 0 } } catch {}
-            Start-Sleep 2
-          }
-          Get-Content server.err -Tail 40; throw "llama-server did not become ready"
-
-      - name: API key is enforced
-        shell: bash
-        run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:18080/v1/chat/completions -H "Content-Type: application/json" -d '{"messages":[{"role":"user","content":"hi"}]}')
-          echo "without key: $code"; [ "$code" = "401" ] || { echo "::error::expected 401 without API key, got $code"; exit 1; }
-
-      - name: CORS preflight works (the app's webview needs it)
-        shell: bash
-        run: |
-          curl -s -i -X OPTIONS http://127.0.0.1:18080/v1/chat/completions \
-            -H "Origin: http://tauri.localhost" -H "Access-Control-Request-Method: POST" \
-            -H "Access-Control-Request-Headers: authorization,content-type" | tee preflight.txt
-          grep -qi "access-control-allow-origin" preflight.txt || { echo "::error::CORS preflight missing Access-Control-Allow-Origin: $(head -c 300 preflight.txt | tr '\r\n' '  ')"; exit 1; }
-
-      - name: Arabic chat (streaming, same request shape as the app)
+      # One step, so the background server is alive for every check.
+      - name: Run engine with the app's arguments and test it
         shell: bash
         env:
           PYTHONIOENCODING: utf-8
         run: |
-          cat > req.json <<'JSON'
-          {"messages":[{"role":"system","content":"You are MyAI. Reply in the user's language."},{"role":"user","content":"عرّف نفسك في جملة واحدة."}],
-           "stream":true,"temperature":0.7,"top_p":0.8,"max_tokens":200,"cache_prompt":true,"chat_template_kwargs":{"enable_thinking":false}}
-          JSON
-          curl -sN http://127.0.0.1:18080/v1/chat/completions -H "Authorization: Bearer testkey" -H "Content-Type: application/json" \
-            -H "Origin: http://tauri.localhost" --data-binary @req.json > stream.txt
-          head -c 1500 stream.txt; echo
-          grep -q '^data: ' stream.txt || { echo "::error::no SSE data lines: $(head -c 300 stream.txt)"; exit 1; }
-          grep -q '\[DONE\]' stream.txt || { echo "::error::stream did not finish"; exit 1; }
+          set +e
+          fail() { echo "::error title=$1::$2 | server: $(tail -n 6 server.err 2>/dev/null | tr '\r\n' '  ' | cut -c1-600)"; exit 1; }
+          ./engine/llama-server.exe -m lite.gguf --host 127.0.0.1 --port 18080 --api-key testkey -c 8192 --jinja --no-webui \
+            > server.out 2> server.err &
+          PID=$!
+          for i in $(seq 1 120); do
+            kill -0 $PID 2>/dev/null || fail start "llama-server exited"
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/health)" = "200" ] && break
+            sleep 2
+          done
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/health)" = "200" ] || fail start "not ready after 4 minutes"
+          echo "server ready"
+
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:18080/v1/chat/completions \
+            -H "Content-Type: application/json" -d '{"messages":[{"role":"user","content":"hi"}]}')
+          [ "$code" = "401" ] || fail api-key "expected 401 without API key, got $code"
+
+          curl -s -i -X OPTIONS http://127.0.0.1:18080/v1/chat/completions -H "Origin: http://tauri.localhost" \
+            -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: authorization,content-type" > preflight.txt
+          grep -qi "access-control-allow-origin" preflight.txt || fail cors "preflight: $(head -c 300 preflight.txt | tr '\r\n' '  ')"
+
+          printf '%s' '{"messages":[{"role":"system","content":"You are MyAI. Reply in the user'"'"'s language."},{"role":"user","content":"عرّف نفسك في جملة واحدة."}],"stream":true,"temperature":0.7,"top_p":0.8,"max_tokens":200,"cache_prompt":true,"chat_template_kwargs":{"enable_thinking":false}}' > req.json
+          curl -sN http://127.0.0.1:18080/v1/chat/completions -H "Authorization: Bearer testkey" \
+            -H "Content-Type: application/json" -H "Origin: http://tauri.localhost" --data-binary @req.json > stream.txt
+          grep -q '^data: ' stream.txt || fail chat "no SSE data: $(head -c 300 stream.txt)"
+          grep -q '\[DONE\]' stream.txt || fail chat "stream did not finish"
           python - <<'PY'
           import json, re
           text = ""
@@ -95,8 +86,14 @@ jobs:
               if line.startswith("data: ") and line != "data: [DONE]":
                   text += json.loads(line[6:])["choices"][0]["delta"].get("content") or ""
           print("ANSWER:", text)
-          assert re.search(r"[؀-ۿ]{3,}", text), "answer has no Arabic text"
+          print("::notice title=Arabic answer::" + text.replace("\n", " ")[:300])
+          if not re.search(r"[\u0600-\u06FF]{3,}", text):
+              print("::error title=chat::answer has no Arabic text")
+              raise SystemExit(1)
           PY
+          rc=$?
+          kill $PID 2>/dev/null
+          exit $rc
 
       - name: Server log on failure
         if: failure()
