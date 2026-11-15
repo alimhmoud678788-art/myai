@@ -29,12 +29,28 @@ jobs:
 
       - run: npm ci
 
+      # The updater key is committed ENCRYPTED (src-tauri/updater.key.encrypted, random 192-bit password).
+      # Only the password is a secret. Without it the installer still builds, just without update signatures.
+      - name: Updater signing
+        id: sign
+        shell: bash
+        env:
+          PW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$PW" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(tr -d '\r\n' < src-tauri/updater.key.encrypted)" >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$PW" >> "$GITHUB_ENV"
+            echo "args=" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret not set: building without auto-update artifacts."
+            echo "args=--config src-tauri/tauri.nosign.conf.json" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          args: ${{ steps.sign.outputs.args }}
           tagName: v__VERSION__
           releaseName: "MyAI v__VERSION__"
           releaseBody: "⬇️ Download **MyAI_x.y.z_x64-setup.exe** below, run it, and paste your free Gemini key (aistudio.google.com/apikey) on first launch."

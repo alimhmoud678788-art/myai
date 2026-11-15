@@ -86,11 +86,10 @@ git push origin v0.2.0
 
 يبني GitHub Actions المثبّت على ويندوز، وينشره في Releases مع ملف `latest.json`، فتصل التحديثات لكل المستخدمين تلقائياً.
 
-يحتاج ذلك سرّين في **Settings → Secrets and variables → Actions**:
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-
-ويجب أن يطابقا المفتاح العام `pubkey` الموجود في `tauri.conf.json`.
+**توقيع التحديثات:**
+- مفتاح التوقيع محفوظ في المستودع **مشفّراً** في الملف `src-tauri/updater.key.encrypted`، بكلمة مرور عشوائية طولها 192 بت.
+- السر الوحيد المطلوب هو كلمة المرور. أضفها في **Settings → Secrets and variables → Actions** باسم `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- إذا لم تُضف كلمة المرور، يُبنى المثبّت عادياً، لكن ذلك الإصدار لا يُوزَّع كتحديث تلقائي.
 
 ### الفحوصات
 ```powershell
