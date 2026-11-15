@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@custom-variant dark (&:where(.dark, .dark *));
+
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+  font-family: "Segoe UI", system-ui, "IBM Plex Sans Arabic", sans-serif;
+}
+
+html[dir="rtl"] body {
+  font-family: "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
+}
+
+/* highlight.js theme paints its own background; our CodeBlock container already does. */
+pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* Inline code inside prose: no backtick pseudo-elements */
+.prose :where(code):not(:where(pre *))::before,
+.prose :where(code):not(:where(pre *))::after {
+  content: none;
+}

@@ -1,0 +1,24 @@
+# Minimal config — `npx supabase init` can regenerate the full file; keep these values.
+project_id = "myai"
+
+[auth]
+site_url = "myai://auth/callback"
+additional_redirect_urls = ["myai://auth/callback"]
+
+[auth.email]
+enable_signup = true
+
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_CLIENT_SECRET)"
+skip_nonce_check = false
+
+[functions.chat]
+verify_jwt = true
+
+[functions.ingest]
+verify_jwt = true
+
+[functions.image]
+verify_jwt = true
