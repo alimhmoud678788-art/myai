@@ -1,6 +1,6 @@
 [package]
 name = "myai"
-version = "0.1.1"
+version = "0.2.0"
 description = "MyAI desktop assistant"
 edition = "2021"
 
@@ -22,8 +22,14 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Stores the user's Gemini key in Windows Credential Manager (encrypted by Windows, per user).
-keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+# Local AI engine: model download + process management
+reqwest = { version = "0.13", features = ["stream"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["fs", "io-util", "time"] }
+getrandom = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [profile.release]
 codegen-units = 1

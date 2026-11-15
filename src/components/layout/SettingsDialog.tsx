@@ -3,26 +3,19 @@ import { useTranslation } from "react-i18next";
 import { LANGUAGES } from "../../i18n";
 import { applyShortcut, getShortcut, getTheme, setPrefs, type Theme } from "../../lib/prefs";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { emit } from "@tauri-apps/api/event";
-import { getModels, removeApiKey, type Models } from "../../lib/gemini";
+import { engineStatus, type ModelId } from "../../lib/engine";
 import { deleteAllData } from "../../lib/db";
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({ onClose, onChangeModel }: { onClose: () => void; onChangeModel: () => void }) {
   const { t, i18n } = useTranslation();
   const [theme, setTheme] = useState<Theme>(getTheme());
   const [shortcut, setShortcut] = useState(getShortcut());
   const [shortcutError, setShortcutError] = useState(false);
-  const [models, setModels] = useState<Models | null>(null);
+  const [active, setActive] = useState<ModelId | null>(null);
 
   useEffect(() => {
-    getModels().then(setModels).catch(() => {});
+    engineStatus().then((s) => setActive(s.active)).catch(() => {});
   }, []);
-
-  const changeKey = async () => {
-    if (!(await ask(t("confirmRemoveKey"), { kind: "warning" }))) return;
-    await removeApiKey();
-    await emit("key-changed");
-  };
 
   const wipe = async () => {
     if (!(await ask(t("confirmDeleteAll"), { kind: "warning" }))) return;
@@ -93,18 +86,14 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </p>
         </div>
 
-        <div className="space-y-2 border-t border-zinc-200 pt-4 text-sm dark:border-zinc-800">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">{t("apiKey")}</span>
-            <button onClick={changeKey} className="rounded-lg border border-zinc-300 px-3 py-1 dark:border-zinc-700">
-              {t("changeKey")}
-            </button>
+        <div className="flex items-center justify-between border-t border-zinc-200 pt-4 text-sm dark:border-zinc-800">
+          <div>
+            <div className="font-medium">{t("aiModel")}</div>
+            <div className="text-xs text-zinc-500">{active ? t(active === "standard" ? "modelStandard" : "modelLite") : "—"}</div>
           </div>
-          {models && (
-            <p dir="ltr" className="font-mono text-xs text-zinc-500">
-              chat: {models.chat} · embed: {models.embed} · image: {models.image ?? "—"}
-            </p>
-          )}
+          <button onClick={onChangeModel} className="rounded-lg border border-zinc-300 px-3 py-1 dark:border-zinc-700">
+            {t("changeModel")}
+          </button>
         </div>
 
         <div className="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-800">

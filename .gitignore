@@ -7,3 +7,5 @@ src-tauri/gen/schemas
 *.key
 supabase/.temp
 supabase/.branches
+src-tauri/llama/*
+!src-tauri/llama/README.md

@@ -1,9 +1,11 @@
+mod engine;
+
 use std::sync::Mutex;
 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, WindowEvent,
+    AppHandle, Manager, RunEvent, State, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -32,40 +34,6 @@ fn toggle_quick(app: &AppHandle) {
             let _ = w.show();
             let _ = w.set_focus();
         }
-    }
-}
-
-const KEYRING_SERVICE: &str = "com.myai.desktop";
-const KEYRING_USER: &str = "gemini_api_key";
-
-fn key_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
-}
-
-/// Reads the user's Gemini key from Windows Credential Manager (None if not set yet).
-#[tauri::command]
-fn get_api_key() -> Result<Option<String>, String> {
-    match key_entry()?.get_password() {
-        Ok(k) => Ok(Some(k)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-#[tauri::command]
-fn set_api_key(key: String) -> Result<(), String> {
-    let key = key.trim();
-    if key.is_empty() || key.len() > 512 {
-        return Err("Invalid key".into());
-    }
-    key_entry()?.set_password(key).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn delete_api_key() -> Result<(), String> {
-    match key_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -113,11 +81,16 @@ pub fn run() {
                 .build(),
         )
         .manage(QuickShortcut(Mutex::new(default_shortcut())))
+        .manage(engine::Engine::default())
         .invoke_handler(tauri::generate_handler![
             set_quick_shortcut,
-            get_api_key,
-            set_api_key,
-            delete_api_key
+            engine::system_info,
+            engine::engine_status,
+            engine::start_engine,
+            engine::engine_log_tail,
+            engine::download_model,
+            engine::cancel_download,
+            engine::delete_model
         ])
         .setup(|app| {
             if let Err(e) = app.global_shortcut().register(default_shortcut()) {
@@ -168,6 +141,12 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
-        .expect("error while running MyAI");
+        .build(tauri::generate_context!())
+        .expect("error while building MyAI")
+        .run(|app, event| {
+            // Stop the local AI engine when the app quits.
+            if let RunEvent::Exit = event {
+                app.state::<engine::Engine>().stop();
+            }
+        });
 }

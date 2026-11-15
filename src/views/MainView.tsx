@@ -8,7 +8,7 @@ import { UpdateBanner } from "../components/layout/UpdateBanner";
 import { MessageList } from "../components/chat/MessageList";
 import { Composer, type Doc } from "../components/chat/Composer";
 
-export function MainView() {
+export function MainView({ onChangeModel }: { onChangeModel: () => void }) {
   const { t } = useTranslation();
   const chat = useChat();
   const [docs, setDocs] = useState<Doc[]>([]);
@@ -58,7 +58,15 @@ export function MainView() {
           />
         </main>
       </div>
-      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
+      {showSettings && (
+        <SettingsDialog
+          onClose={() => setShowSettings(false)}
+          onChangeModel={() => {
+            setShowSettings(false);
+            onChangeModel();
+          }}
+        />
+      )}
     </div>
   );
 }

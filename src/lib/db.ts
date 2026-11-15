@@ -17,8 +17,8 @@ export type Message = {
   error?: boolean;
   createdAt: number;
 };
-export type DocumentRec = { id: string; conversationId: string | null; name: string; embedModel: string; createdAt: number };
-export type Chunk = { id?: number; documentId: string; page: number; content: string; embedding: Float32Array };
+export type DocumentRec = { id: string; conversationId: string | null; name: string; createdAt: number };
+export type Chunk = { id?: number; documentId: string; page: number; content: string };
 
 export const db = new Dexie("myai") as Dexie & {
   conversations: EntityTable<Conversation, "id">;

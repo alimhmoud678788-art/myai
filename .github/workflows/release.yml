@@ -31,6 +31,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Fetch llama.cpp engine
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/fetch-llama.ps1 -Dest src-tauri/llama
+
       # The updater key is committed ENCRYPTED (src-tauri/updater.key.encrypted, random 192-bit password).
       # Only the password is a secret. Without it the installer still builds, just without update signatures.
       - name: Updater signing
@@ -55,7 +61,7 @@ jobs:
           args: ${{ steps.sign.outputs.args }}
           tagName: v__VERSION__
           releaseName: "MyAI v__VERSION__"
-          releaseBody: "⬇️ Download **MyAI_x.y.z_x64-setup.exe** below, run it, and paste your free Gemini key (aistudio.google.com/apikey) on first launch."
+          releaseBody: "⬇️ Download **MyAI_x.y.z_x64-setup.exe** below and run it. On first launch the app downloads its AI brain once (1–2.5 GB); after that it works offline."
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

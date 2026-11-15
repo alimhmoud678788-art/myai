@@ -2,11 +2,11 @@ import { useCallback, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { emit } from "@tauri-apps/api/event";
 import { addMessage, createConversation, getMessages, type Message } from "../lib/db";
-import { friendlyError, generateImage, streamChat, type Turn } from "../lib/gemini";
+import { friendlyError, streamChat, SYSTEM_PROMPT, type ChatMessage } from "../lib/engine";
 import { attachDocuments, retrieveContext } from "../lib/rag";
 
-export const IMAGE_CMD = /^\/(image|img|صورة)\s+/i;
-const HISTORY_LIMIT = 20;
+/** Rough budget so prompt + answer fit in the engine's 8k-token context. */
+const HISTORY_CHAR_BUDGET = 9000;
 
 /** A message still being streamed is kept in memory and only written to the DB when complete. */
 type Draft = { id: string; content: string; pending: boolean };
@@ -26,7 +26,17 @@ export function useChat() {
   // Keep showing the draft until the live query has picked up the saved message (no flicker).
   const showDraft = draft && !stored.some((m) => m.id === draft.id);
   const messages: (Message & { pending?: boolean })[] = showDraft
-    ? [...stored, { id: draft.id, conversationId: conversationId ?? "", role: "assistant", content: draft.content, pending: draft.pending, createdAt: Date.now() }]
+    ? [
+        ...stored,
+        {
+          id: draft.id,
+          conversationId: conversationId ?? "",
+          role: "assistant",
+          content: draft.content,
+          pending: draft.pending,
+          createdAt: Date.now(),
+        },
+      ]
     : stored;
 
   const load = useCallback((id: string | undefined) => {
@@ -35,7 +45,7 @@ export function useChat() {
     setConversationId(id);
   }, []);
 
-  async function send(text: string, opts: { webSearch?: boolean; documentIds?: string[] } = {}) {
+  async function send(text: string, opts: { documentIds?: string[] } = {}) {
     const docs = opts.documentIds ?? [];
     let convId = conversationId;
     if (!convId) {
@@ -53,27 +63,28 @@ export function useChat() {
     let content = "";
 
     try {
-      if (IMAGE_CMD.test(text)) {
-        const image = await generateImage(text.replace(IMAGE_CMD, ""));
-        await addMessage({ id: draftId, conversationId: convId, role: "assistant", content: "", image });
-        return;
-      }
-
       const context = await retrieveContext(text, docs);
-      const turns: Turn[] = history
-        .filter((m) => m.content && !m.error)
-        .slice(-HISTORY_LIMIT)
-        .map((m) => ({ role: m.role === "assistant" ? "model" : "user", text: m.content }));
-      turns.push({ role: "user", text: context ? `Document context:\n${context}\n\nQuestion: ${text}` : text });
 
-      let sources;
-      for await (const ev of streamChat(turns, { webSearch: opts.webSearch, signal: abort.current.signal })) {
-        if (ev.type === "delta") {
-          content += ev.text;
-          setDraft({ id: draftId, content, pending: false });
-        } else sources = ev.sources;
+      // Most recent turns that fit the budget, oldest first.
+      const turns: ChatMessage[] = [];
+      let used = 0;
+      for (const m of [...history].reverse()) {
+        if (!m.content || m.error) continue;
+        used += m.content.length;
+        if (used > HISTORY_CHAR_BUDGET) break;
+        turns.unshift({ role: m.role, content: m.content });
       }
-      await addMessage({ id: draftId, conversationId: convId, role: "assistant", content, sources });
+      const messages: ChatMessage[] = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...turns,
+        { role: "user", content: context ? `Document context:\n${context}\n\nQuestion: ${text}` : text },
+      ];
+
+      for await (const piece of streamChat(messages, abort.current.signal)) {
+        content += piece;
+        setDraft({ id: draftId, content, pending: false });
+      }
+      await addMessage({ id: draftId, conversationId: convId, role: "assistant", content: content.trim() });
     } catch (e) {
       const aborted = (e as Error).name === "AbortError";
       await addMessage({
