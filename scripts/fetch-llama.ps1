@@ -3,6 +3,8 @@
 param([string]$Dest = "src-tauri/llama")
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# Surface failures as GitHub annotations so they are visible without opening the log.
+trap { Write-Host "::error title=fetch-llama::$($_.Exception.Message)"; exit 1 }
 
 $headers = @{ "User-Agent" = "myai-ci" }
 if ($env:GH_TOKEN) { $headers.Authorization = "Bearer $env:GH_TOKEN" }
@@ -13,7 +15,10 @@ $api = if ($env:LLAMA_TAG) {
 }
 $rel = Invoke-RestMethod -Uri $api -Headers $headers
 $asset = $rel.assets | Where-Object { $_.name -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
-if (-not $asset) { throw "No Windows CPU x64 build in llama.cpp release $($rel.tag_name)" }
+if (-not $asset) {
+  $names = ($rel.assets | ForEach-Object { $_.name }) -join ", "
+  throw "No Windows CPU x64 build in llama.cpp release $($rel.tag_name). Assets: $names"
+}
 Write-Host "llama.cpp $($rel.tag_name): $($asset.name)"
 
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile llama.zip
