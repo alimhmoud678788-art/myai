@@ -14,18 +14,6 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build
-        env:
-          VITE_SUPABASE_URL: https://example.supabase.co
-          VITE_SUPABASE_ANON_KEY: ci-placeholder
-
-  functions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with: { deno-version: v2.x }
-      - run: deno check --config deno.json chat/index.ts ingest/index.ts image/index.ts
-        working-directory: supabase/functions
 
   rust:
     runs-on: windows-latest

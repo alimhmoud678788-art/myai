@@ -1,14 +1,34 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LANGUAGES } from "../../i18n";
 import { applyShortcut, getShortcut, getTheme, setPrefs, type Theme } from "../../lib/prefs";
-import { signOut } from "../../lib/auth";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { emit } from "@tauri-apps/api/event";
+import { getModels, removeApiKey, type Models } from "../../lib/gemini";
+import { deleteAllData } from "../../lib/db";
 
-export function SettingsDialog({ onClose, email }: { onClose: () => void; email?: string }) {
+export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const { t, i18n } = useTranslation();
   const [theme, setTheme] = useState<Theme>(getTheme());
   const [shortcut, setShortcut] = useState(getShortcut());
   const [shortcutError, setShortcutError] = useState(false);
+  const [models, setModels] = useState<Models | null>(null);
+
+  useEffect(() => {
+    getModels().then(setModels).catch(() => {});
+  }, []);
+
+  const changeKey = async () => {
+    if (!(await ask(t("confirmRemoveKey"), { kind: "warning" }))) return;
+    await removeApiKey();
+    await emit("key-changed");
+  };
+
+  const wipe = async () => {
+    if (!(await ask(t("confirmDeleteAll"), { kind: "warning" }))) return;
+    await deleteAllData();
+    onClose();
+  };
 
   const saveShortcut = async () => {
     try {
@@ -73,16 +93,27 @@ export function SettingsDialog({ onClose, email }: { onClose: () => void; email?
           </p>
         </div>
 
-        <div className="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-800">
-          <span className="truncate text-sm text-zinc-500">{email}</span>
-          <div className="flex gap-2">
-            <button onClick={signOut} className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
-              {t("signOut")}
-            </button>
-            <button onClick={onClose} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700">
-              {t("close")}
+        <div className="space-y-2 border-t border-zinc-200 pt-4 text-sm dark:border-zinc-800">
+          <div className="flex items-center justify-between">
+            <span className="font-medium">{t("apiKey")}</span>
+            <button onClick={changeKey} className="rounded-lg border border-zinc-300 px-3 py-1 dark:border-zinc-700">
+              {t("changeKey")}
             </button>
           </div>
+          {models && (
+            <p dir="ltr" className="font-mono text-xs text-zinc-500">
+              chat: {models.chat} · embed: {models.embed} · image: {models.image ?? "—"}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          <button onClick={wipe} className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+            {t("deleteAll")}
+          </button>
+          <button onClick={onClose} className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700">
+            {t("close")}
+          </button>
         </div>
       </div>
     </div>

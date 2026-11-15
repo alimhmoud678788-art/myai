@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { Source } from "../../lib/api";
+import type { Source } from "../../lib/db";
 import { openExternal } from "../../lib/links";
 
 export function Sources({ sources }: { sources: Source[] }) {

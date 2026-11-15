@@ -1,35 +1,24 @@
 import { useEffect, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import {
-  deleteConversation,
-  listConversations,
-  renameConversation,
-  searchHistory,
-  type Conversation,
-  type SearchHit,
-} from "../../hooks/useConversations";
+import { db, deleteConversation, renameConversation, searchHistory, type SearchHit } from "../../lib/db";
 
 type Props = {
   activeId?: string;
-  refreshKey: number;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDeleted: (id: string) => void;
 };
 
-export function Sidebar({ activeId, refreshKey, onSelect, onNew, onDeleted }: Props) {
+export function Sidebar({ activeId, onSelect, onNew, onDeleted }: Props) {
   const { t } = useTranslation();
-  const [items, setItems] = useState<Conversation[]>([]);
+  // Live: updates automatically when either window adds, renames or deletes a chat.
+  const items = useLiveQuery(() => db.conversations.orderBy("updatedAt").reverse().limit(300).toArray(), [], []);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-
-  const refresh = () => listConversations().then(setItems).catch(console.error);
-  useEffect(() => {
-    refresh();
-  }, [refreshKey]);
 
   // Debounced full-text search over message content
   useEffect(() => {
@@ -40,10 +29,7 @@ export function Sidebar({ activeId, refreshKey, onSelect, onNew, onDeleted }: Pr
     }
     const id = setTimeout(() => {
       searchHistory(q)
-        .then((rows) => {
-          const seen = new Set<string>();
-          setHits(rows.filter((r) => !seen.has(r.conversation_id) && seen.add(r.conversation_id)));
-        })
+        .then(setHits)
         .catch(console.error);
     }, 300);
     return () => clearTimeout(id);
@@ -52,7 +38,6 @@ export function Sidebar({ activeId, refreshKey, onSelect, onNew, onDeleted }: Pr
   const remove = async (id: string) => {
     if (!(await ask(t("confirmDelete"), { kind: "warning" }))) return;
     await deleteConversation(id);
-    setItems((all) => all.filter((c) => c.id !== id));
     onDeleted(id);
   };
 
@@ -61,7 +46,6 @@ export function Sidebar({ activeId, refreshKey, onSelect, onNew, onDeleted }: Pr
     setEditing(null);
     if (!title) return;
     await renameConversation(id, title);
-    setItems((all) => all.map((c) => (c.id === id ? { ...c, title } : c)));
   };
 
   const row = "group flex items-center gap-1 rounded-lg px-2 py-2 text-sm cursor-pointer";
@@ -88,9 +72,9 @@ export function Sidebar({ activeId, refreshKey, onSelect, onNew, onDeleted }: Pr
         {hits ? (
           hits.length ? (
             hits.map((h) => (
-              <div key={h.conversation_id} onClick={() => onSelect(h.conversation_id)} className={`${row} flex-col items-start hover:bg-zinc-200 dark:hover:bg-zinc-800`}>
+              <div key={h.conversationId} onClick={() => onSelect(h.conversationId)} className={`${row} flex-col items-start hover:bg-zinc-200 dark:hover:bg-zinc-800`}>
                 <span dir="auto" className="w-full truncate font-medium">{h.title}</span>
-                <span dir="auto" className="line-clamp-2 w-full text-xs text-zinc-500">{h.snippet}</span>
+                {h.snippet && <span dir="auto" className="line-clamp-2 w-full text-xs text-zinc-500">{h.snippet}</span>}
               </div>
             ))
           ) : (

@@ -1,14 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { saveImage } from "../../lib/files";
 
-export function ImageMessage({ url }: { url: string }) {
+export function ImageMessage({ image }: { image: Blob }) {
   const { t } = useTranslation();
+  const [url, setUrl] = useState<string>();
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    const u = URL.createObjectURL(image);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [image]);
 
   const onSave = async () => {
     try {
-      if (await saveImage(url)) {
+      if (await saveImage(image)) {
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       }
@@ -19,7 +26,7 @@ export function ImageMessage({ url }: { url: string }) {
 
   return (
     <figure className="max-w-md">
-      <img src={url} alt="" className="rounded-xl border border-zinc-200 dark:border-zinc-800" />
+      {url && <img src={url} alt="" className="rounded-xl border border-zinc-200 dark:border-zinc-800" />}
       <button
         onClick={onSave}
         className="mt-2 rounded-lg border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"

@@ -2,14 +2,13 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 
 /** Native "Save as" dialog, then writes the image to the chosen path on disk. */
-export async function saveImage(url: string, name = `myai-${Date.now()}.png`) {
+export async function saveImage(image: Blob) {
+  const ext = image.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
   const path = await save({
-    defaultPath: name,
-    filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp"] }],
+    defaultPath: `myai-${Date.now()}.${ext}`,
+    filters: [{ name: "Image", extensions: [ext] }],
   });
   if (!path) return false;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-  await writeFile(path, new Uint8Array(await res.arrayBuffer()));
+  await writeFile(path, new Uint8Array(await image.arrayBuffer()));
   return true;
 }

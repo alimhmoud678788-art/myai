@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { Msg } from "../../hooks/useChat";
+import type { Message } from "../../lib/db";
+
+type Msg = Message & { pending?: boolean };
 import { Markdown } from "./Markdown";
 import { Sources } from "./Sources";
 import { ImageMessage } from "./ImageMessage";
@@ -39,12 +41,13 @@ export function MessageList({ messages, busy, compact = false }: { messages: Msg
               </div>
             );
           }
-          const waiting = busy && last && !m.content && !m.imageUrl;
+          const waiting = busy && last && m.pending;
           return (
             <div key={m.id} className={m.error ? "text-red-600 dark:text-red-400" : ""}>
               {waiting && <span className="animate-pulse text-zinc-500">{t("thinking")}</span>}
-              {m.imageUrl && <ImageMessage url={m.imageUrl} />}
+              {m.image && <ImageMessage image={m.image} />}
               {m.content && <Markdown content={m.content} />}
+              {busy && last && m.pending === false && <span className="inline-block h-4 w-2 animate-pulse bg-zinc-400 align-middle" />}
               {m.sources && <Sources sources={m.sources} />}
             </div>
           );

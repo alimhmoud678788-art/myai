@@ -1,6 +1,7 @@
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { callFn } from "./api";
+import { db } from "./db";
+import { embed } from "./gemini";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -35,17 +36,26 @@ export function chunkPages(pages: Page[], size = 1200, overlap = 200): Chunk[] {
   return out;
 }
 
-export const MAX_PDF_BYTES = 30 * 1024 * 1024;
+export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+export const MAX_CHUNKS = 2000;
 
-export async function uploadPdf(file: File, conversationId?: string) {
+/** Reads the PDF locally, embeds its chunks with Gemini, and stores everything in the local DB. */
+export async function ingestPdf(file: File, conversationId: string | null, onProgress?: (pct: number) => void) {
   if (file.size > MAX_PDF_BYTES) throw new Error("PDF_TOO_LARGE");
   const pages = await extractPdf(file);
   if (!pages.length) throw new Error("NO_TEXT"); // scanned PDF → needs OCR
   const chunks = chunkPages(pages);
-  if (chunks.length > 2000) throw new Error("PDF_TOO_LARGE");
-  return callFn<{ documentId: string; chunks: number }>("ingest", {
-    name: file.name,
-    conversationId,
-    chunks,
+  if (chunks.length > MAX_CHUNKS) throw new Error("PDF_TOO_LARGE");
+
+  const { vectors, model } = await embed(
+    chunks.map((c) => c.content),
+    "RETRIEVAL_DOCUMENT",
+    (done) => onProgress?.(Math.round((done / chunks.length) * 100)),
+  );
+  const id = crypto.randomUUID();
+  await db.transaction("rw", [db.documents, db.chunks], async () => {
+    await db.documents.add({ id, conversationId, name: file.name, embedModel: model, createdAt: Date.now() });
+    await db.chunks.bulkAdd(chunks.map((c, i) => ({ documentId: id, page: c.page, content: c.content, embedding: vectors[i] })));
   });
+  return { id, name: file.name };
 }

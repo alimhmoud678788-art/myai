@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Doc } from "../../hooks/useConversations";
+import { friendlyError } from "../../lib/gemini";
+
+export type Doc = { id: string; name: string };
 
 type Props = {
   busy: boolean;
@@ -17,28 +19,28 @@ export function Composer({ busy, onSend, onStop, conversationId, initialDocs = [
   const [text, setText] = useState("");
   const [web, setWeb] = useState(false);
   const [docs, setDocs] = useState<Doc[]>(initialDocs);
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const submit = () => {
     const value = text.trim();
-    if (!value || busy || uploading) return;
+    if (!value || busy || uploading !== null) return;
     onSend(value, { webSearch: web, documentIds: docs.map((d) => d.id) });
     setText("");
   };
 
   const onFile = async (file?: File) => {
     if (!file) return;
-    setUploading(true);
+    setUploading(0);
     try {
-      const { uploadPdf } = await import("../../lib/pdf"); // pdf.js loads on first use only
-      const r = await uploadPdf(file, conversationId);
-      setDocs((d) => [...d, { id: r.documentId, name: file.name }]);
+      const { ingestPdf } = await import("../../lib/pdf"); // pdf.js loads on first use only
+      const doc = await ingestPdf(file, conversationId ?? null, setUploading);
+      setDocs((d) => [...d, doc]);
     } catch (e) {
       const msg = (e as Error).message;
-      alert(msg === "NO_TEXT" ? t("pdfNoText") : msg === "PDF_TOO_LARGE" ? t("pdfTooLarge") : msg);
+      alert(msg === "NO_TEXT" ? t("pdfNoText") : msg === "PDF_TOO_LARGE" ? t("pdfTooLarge") : friendlyError(e));
     } finally {
-      setUploading(false);
+      setUploading(null);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -80,10 +82,10 @@ export function Composer({ busy, onSend, onStop, conversationId, initialDocs = [
         <div className="mt-2 flex items-center gap-3 text-sm">
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading !== null}
             className="rounded-lg px-2 py-1 hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800"
           >
-            📎 {uploading ? t("uploading") : t("attachPdf")}
+            📎 {uploading !== null ? `${t("uploading")} ${uploading}%` : t("attachPdf")}
           </button>
           <input ref={fileRef} type="file" accept="application/pdf" hidden onChange={(e) => onFile(e.target.files?.[0])} />
           <label className="flex cursor-pointer items-center gap-1 select-none">
@@ -98,7 +100,7 @@ export function Composer({ busy, onSend, onStop, conversationId, initialDocs = [
           ) : (
             <button
               onClick={submit}
-              disabled={!text.trim() || uploading}
+              disabled={!text.trim() || uploading !== null}
               className="rounded-lg bg-blue-600 px-4 py-1.5 text-white disabled:opacity-40"
             >
               {t("send")}

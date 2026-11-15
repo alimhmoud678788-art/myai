@@ -1,43 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
-import type { Session } from "@supabase/supabase-js";
 import { useChat } from "../hooks/useChat";
-import { loadDocuments, loadMessages, type Doc } from "../hooks/useConversations";
+import { db } from "../lib/db";
 import { Sidebar } from "../components/layout/Sidebar";
 import { SettingsDialog } from "../components/layout/SettingsDialog";
 import { UpdateBanner } from "../components/layout/UpdateBanner";
 import { MessageList } from "../components/chat/MessageList";
-import { Composer } from "../components/chat/Composer";
+import { Composer, type Doc } from "../components/chat/Composer";
 
-export function MainView({ session }: { session: Session }) {
+export function MainView() {
   const { t } = useTranslation();
-  const [refreshKey, setRefreshKey] = useState(0);
-  const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
-  const chat = useChat(bump);
+  const chat = useChat();
   const [docs, setDocs] = useState<Doc[]>([]);
   // Remount the composer only when the user switches chats (not when a new chat gets its id).
   const [composerKey, setComposerKey] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
 
-  // The quick window created/updated a chat → refresh the sidebar.
-  useEffect(() => {
-    const un = listen("conversations-changed", bump);
-    return () => {
-      un.then((f) => f());
-    };
-  }, [bump]);
-
   const select = async (id: string) => {
-    const [msgs, d] = await Promise.all([loadMessages(id), loadDocuments(id)]);
-    setDocs(d);
-    chat.load(id, msgs);
+    const d = await db.documents.where("conversationId").equals(id).toArray();
+    setDocs(d.map(({ id, name }) => ({ id, name })));
+    chat.load(id);
     setComposerKey((k) => k + 1);
   };
 
   const newChat = () => {
     setDocs([]);
-    chat.load(undefined, []);
+    chat.load(undefined);
     setComposerKey((k) => k + 1);
   };
 
@@ -47,7 +35,6 @@ export function MainView({ session }: { session: Session }) {
       <div className="flex min-h-0 flex-1">
         <Sidebar
           activeId={chat.conversationId}
-          refreshKey={refreshKey}
           onSelect={select}
           onNew={newChat}
           onDeleted={(id) => id === chat.conversationId && newChat()}
@@ -55,10 +42,7 @@ export function MainView({ session }: { session: Session }) {
         <main className="flex min-w-0 flex-1 flex-col">
           <header className="flex items-center justify-between border-b border-zinc-200 px-4 py-2 dark:border-zinc-800">
             <span className="font-semibold">{t("appName")}</span>
-            <button
-              onClick={() => setShowSettings(true)}
-              className="rounded-lg px-2 py-1 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            >
+            <button onClick={() => setShowSettings(true)} className="rounded-lg px-2 py-1 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">
               ⚙️ {t("settings")}
             </button>
           </header>
@@ -74,7 +58,7 @@ export function MainView({ session }: { session: Session }) {
           />
         </main>
       </div>
-      {showSettings && <SettingsDialog email={session.user.email} onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

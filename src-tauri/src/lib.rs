@@ -35,6 +35,40 @@ fn toggle_quick(app: &AppHandle) {
     }
 }
 
+const KEYRING_SERVICE: &str = "com.myai.desktop";
+const KEYRING_USER: &str = "gemini_api_key";
+
+fn key_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
+}
+
+/// Reads the user's Gemini key from Windows Credential Manager (None if not set yet).
+#[tauri::command]
+fn get_api_key() -> Result<Option<String>, String> {
+    match key_entry()?.get_password() {
+        Ok(k) => Ok(Some(k)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn set_api_key(key: String) -> Result<(), String> {
+    let key = key.trim();
+    if key.is_empty() || key.len() > 512 {
+        return Err("Invalid key".into());
+    }
+    key_entry()?.set_password(key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_api_key() -> Result<(), String> {
+    match key_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Called from Settings. Registers the new hotkey first so the old one stays active if it fails.
 #[tauri::command]
 fn set_quick_shortcut(
@@ -59,13 +93,11 @@ fn set_quick_shortcut(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // Must be first: a second launch (or a myai:// deep link on Windows) is forwarded here.
+        // Must be first: launching MyAI again just focuses the running instance.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app)
         }))
-        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
@@ -81,7 +113,12 @@ pub fn run() {
                 .build(),
         )
         .manage(QuickShortcut(Mutex::new(default_shortcut())))
-        .invoke_handler(tauri::generate_handler![set_quick_shortcut])
+        .invoke_handler(tauri::generate_handler![
+            set_quick_shortcut,
+            get_api_key,
+            set_api_key,
+            delete_api_key
+        ])
         .setup(|app| {
             if let Err(e) = app.global_shortcut().register(default_shortcut()) {
                 eprintln!("Global shortcut unavailable (used by another app?): {e}");
@@ -117,14 +154,6 @@ pub fn run() {
             }
             tray.build(app)?;
 
-            // Registers myai:// in the registry (the installer also does this; needed for `tauri dev`).
-            #[cfg(any(windows, target_os = "linux"))]
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                if let Err(e) = app.deep_link().register_all() {
-                    eprintln!("Deep link registration failed: {e}");
-                }
-            }
             Ok(())
         })
         .on_window_event(|window, event| match event {

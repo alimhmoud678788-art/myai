@@ -1,7 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
 import { useChat } from "../hooks/useChat";
 import { MessageList } from "../components/chat/MessageList";
 import { Composer } from "../components/chat/Composer";
@@ -9,10 +8,7 @@ import { Composer } from "../components/chat/Composer";
 /** Spotlight-style window toggled by the global hotkey. */
 export function QuickChat() {
   const { t } = useTranslation();
-  const notify = useCallback(() => {
-    emit("conversations-changed");
-  }, []);
-  const chat = useChat(notify);
+  const chat = useChat();
 
   useEffect(() => {
     const win = getCurrentWindow();
