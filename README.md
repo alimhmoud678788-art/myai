@@ -75,13 +75,13 @@ npm run tauri dev
 
 ### إصدار نسخة جديدة
 1. ارفع رقم `version` في `src-tauri/tauri.conf.json` وفي `package.json`.
-2. نفّذ:
+2. اعمل commit وارفعه، ثم انشره على فرع `release`:
 
 ```powershell
-git tag v0.2.0
+git push origin main
 ```
 ```powershell
-git push origin v0.2.0
+git push origin main:release
 ```
 
 يبني GitHub Actions المثبّت على ويندوز، وينشره في Releases مع ملف `latest.json`، فتصل التحديثات لكل المستخدمين تلقائياً.

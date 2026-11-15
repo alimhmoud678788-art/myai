@@ -1,10 +1,12 @@
 # Builds the Windows installer (.exe NSIS + .msi), signs updater artifacts,
 # and publishes a GitHub Release with latest.json for the auto-updater.
-# Trigger: push a tag like v0.2.0 (must match "version" in src-tauri/tauri.conf.json).
+# Trigger: bump "version" in src-tauri/tauri.conf.json + package.json, then push main to the
+# `release` branch (git push origin main:release). The action creates the vX.Y.Z tag and release.
 name: Release
 
 on:
   push:
+    branches: [release]
     tags: ["v*"]
   workflow_dispatch:
 
