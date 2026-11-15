@@ -8,17 +8,24 @@ trap { Write-Host "::error title=fetch-llama::$($_.Exception.Message)"; exit 1 }
 
 $headers = @{ "User-Agent" = "myai-ci" }
 if ($env:GH_TOKEN) { $headers.Authorization = "Bearer $env:GH_TOKEN" }
-$api = if ($env:LLAMA_TAG) {
-  "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$($env:LLAMA_TAG)"
+$pattern = "bin-win-cpu-x64\.zip$"
+if ($env:LLAMA_TAG) {
+  $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/$($env:LLAMA_TAG)" -Headers $headers)
 } else {
-  "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+  # The "latest" release may not carry binaries (e.g. a nightly marker), so scan recent releases.
+  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=40" -Headers $headers
 }
-$rel = Invoke-RestMethod -Uri $api -Headers $headers
-$asset = $rel.assets | Where-Object { $_.name -match "bin-win-cpu-x64\.zip$" } | Select-Object -First 1
+$rel = $null; $asset = $null
+foreach ($r in $releases) {
+  if ($r.draft) { continue }
+  $a = $r.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+  if ($a) { $rel = $r; $asset = $a; break }
+}
 if (-not $asset) {
-  $names = ($rel.assets | ForEach-Object { $_.name }) -join ", "
-  throw "No Windows CPU x64 build in llama.cpp release $($rel.tag_name). Assets: $names"
+  $seen = ($releases | Select-Object -First 5 | ForEach-Object { "$($_.tag_name): " + (($_.assets | Select-Object -First 6 | ForEach-Object { $_.name }) -join ",") }) -join " | "
+  throw "No release with a Windows CPU x64 build found. Recent: $seen"
 }
+Write-Host "::notice title=llama.cpp::using $($rel.tag_name) / $($asset.name)"
 Write-Host "llama.cpp $($rel.tag_name): $($asset.name)"
 
 Invoke-WebRequest -Uri $asset.browser_download_url -OutFile llama.zip
