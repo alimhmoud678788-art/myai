@@ -39,10 +39,11 @@ export class GeminiError extends Error {
 /** Turns API failures into a short message in the user's language. */
 export function friendlyError(e: unknown): string {
   if (e instanceof GeminiError) {
+    const detail = e.message ? `\n\n> Google (${e.status}): ${e.message.replace(/\s+/g, " ").slice(0, 300)}` : "";
     if (e.status === 400 && /api key/i.test(e.message)) return i18n.t("errKey");
-    if (e.status === 401 || e.status === 403) return i18n.t("errKey");
-    if (e.status === 429) return i18n.t("errQuota");
-    if (e.status >= 500) return i18n.t("errServer");
+    if (e.status === 401 || e.status === 403) return i18n.t("errKey") + detail;
+    if (e.status === 429) return i18n.t("errQuota") + detail;
+    if (e.status >= 500) return i18n.t("errServer") + detail;
     return e.message;
   }
   if (e instanceof TypeError) return i18n.t("errNetwork"); // fetch failed: offline / blocked
@@ -76,7 +77,13 @@ async function keyOrThrow() {
 
 // ───────────── Model discovery ─────────────
 // Model names change over time, so we pick the best available ones from the user's key.
-export type Models = { chat: string; embed: string; image: string | null; checkedAt: number };
+export type Models = {
+  chat: string; // the model that worked last (first candidate)
+  chatCandidates: string[]; // tried in order when a model is out of free quota / overloaded / gone
+  embed: string;
+  image: string | null;
+  checkedAt: number;
+};
 const MODELS_KEY = "models";
 const WEEK = 7 * 24 * 3600 * 1000;
 
@@ -87,34 +94,50 @@ const unstable = (n: string) => /(preview|exp|experimental|\d{2}-\d{2})/.test(n)
 const pickBest = (names: string[]) =>
   [...names].sort((a, b) => Number(unstable(a)) - Number(unstable(b)) || version(b) - version(a) || a.length - b.length)[0];
 
-export function chooseModels(models: ApiModel[]): Omit<Models, "checkedAt"> {
-  const gen = models.filter((m) => m.supportedGenerationMethods?.includes("generateContent")).map((m) => m.name);
-  const emb = models.filter((m) => m.supportedGenerationMethods?.includes("embedContent")).map((m) => m.name);
-  const special = /(image|tts|audio|live|vision|thinking|robotics|computer|nano|gemma|learnlm|aqa)/;
+const SPECIAL = /(image|tts|audio|live|vision|thinking|robotics|computer|nano|gemma|learnlm|aqa|embedding)/;
 
-  const chat =
-    pickBest(gen.filter((n) => /gemini-[\d.]+-flash$/.test(n.replace("models/", "")))) ??
-    pickBest(gen.filter((n) => /flash/.test(n) && !/lite/.test(n) && !special.test(n))) ??
-    pickBest(gen.filter((n) => /gemini/.test(n) && !special.test(n)));
+/** Lower = preferred. Stable Flash first (best free tier), then Flash-Lite, aliases, previews, Pro. */
+function chatTier(n: string) {
+  if (/^gemini-[\d.]+-flash$/.test(n)) return 0;
+  if (/^gemini-[\d.]+-flash-lite$/.test(n)) return 1;
+  if (/^gemini-flash(-lite)?-latest$/.test(n)) return 2;
+  if (/flash/.test(n)) return unstable(n) ? 4 : 3;
+  if (/pro/.test(n)) return unstable(n) ? 6 : 5;
+  return 7;
+}
+
+export function chooseModels(models: ApiModel[]): Omit<Models, "checkedAt"> {
+  const strip = (n: string) => n.replace("models/", "");
+  const gen = models.filter((m) => m.supportedGenerationMethods?.includes("generateContent")).map((m) => strip(m.name));
+  const emb = models.filter((m) => m.supportedGenerationMethods?.includes("embedContent")).map((m) => strip(m.name));
+
+  const chatCandidates = gen
+    .filter((n) => /^gemini/.test(n) && !SPECIAL.test(n))
+    .sort((a, b) => chatTier(a) - chatTier(b) || version(b) - version(a) || a.length - b.length)
+    .slice(0, 8);
   const embed = pickBest(emb.filter((n) => /gemini-embedding/.test(n))) ?? pickBest(emb);
   const image = pickBest(gen.filter((n) => /gemini.*image/.test(n))) ?? null;
 
-  if (!chat || !embed) throw new GeminiError(404, "No suitable Gemini models are available for this API key.");
-  return { chat: chat.replace("models/", ""), embed: embed.replace("models/", ""), image: image?.replace("models/", "") ?? null };
+  if (!chatCandidates.length || !embed) throw new GeminiError(404, "No suitable Gemini models are available for this API key.");
+  return { chat: chatCandidates[0], chatCandidates, embed, image };
+}
+
+function saveModels(m: Models) {
+  localStorage.setItem(MODELS_KEY, JSON.stringify(m));
 }
 
 export async function resolveModels(key: string): Promise<Models> {
   const res = await request("models?pageSize=1000", key);
   const { models = [] } = (await res.json()) as { models?: ApiModel[] };
   const chosen: Models = { ...chooseModels(models), checkedAt: Date.now() };
-  localStorage.setItem(MODELS_KEY, JSON.stringify(chosen));
+  saveModels(chosen);
   return chosen;
 }
 
 export async function getModels(): Promise<Models> {
   try {
     const cached = JSON.parse(localStorage.getItem(MODELS_KEY) ?? "null") as Models | null;
-    if (cached && Date.now() - cached.checkedAt < WEEK) return cached;
+    if (cached?.chatCandidates?.length && Date.now() - cached.checkedAt < WEEK) return cached;
   } catch {
     /* ignore */
   }
@@ -122,6 +145,9 @@ export async function getModels(): Promise<Models> {
 }
 
 // ───────────── Chat (streaming) ─────────────
+/** Model-specific failures worth trying the next model for: not found, quota, overloaded. */
+const RETRYABLE = new Set([404, 429, 500, 503, 504]);
+
 const SYSTEM = `You are MyAI, a helpful, concise assistant running as a Windows desktop app.
 - Always reply in the same language the user writes in (Arabic, English, or other).
 - Format answers in Markdown. Put code in fenced blocks with a language tag.
@@ -134,7 +160,7 @@ type GroundingChunk = { web?: { uri?: string; title?: string } };
 
 export async function* streamChat(turns: Turn[], opts: { webSearch?: boolean; signal?: AbortSignal } = {}): AsyncGenerator<StreamEvent> {
   const key = await keyOrThrow();
-  const { chat } = await getModels();
+  const models = await getModels();
   const body: Record<string, unknown> = {
     systemInstruction: { parts: [{ text: SYSTEM }] },
     contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
@@ -142,7 +168,22 @@ export async function* streamChat(turns: Turn[], opts: { webSearch?: boolean; si
   };
   if (opts.webSearch) body.tools = [{ google_search: {} }];
 
-  const res = await request(`models/${chat}:streamGenerateContent?alt=sse`, key, { body, signal: opts.signal });
+  // Try models in order until one accepts the request (free-tier quota and load differ per model).
+  let res: Response | undefined;
+  let lastErr: unknown;
+  for (const model of models.chatCandidates) {
+    try {
+      res = await request(`models/${model}:streamGenerateContent?alt=sse`, key, { body, signal: opts.signal });
+      if (model !== models.chatCandidates[0]) {
+        saveModels({ ...models, chat: model, chatCandidates: [model, ...models.chatCandidates.filter((m) => m !== model)] });
+      }
+      break;
+    } catch (e) {
+      lastErr = e;
+      if (!(e instanceof GeminiError) || !RETRYABLE.has(e.status)) throw e;
+    }
+  }
+  if (!res) throw lastErr;
   const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
   const sources = new Map<string, string>();
   let buf = "";
